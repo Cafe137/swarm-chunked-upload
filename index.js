@@ -4,8 +4,6 @@ import { Promises, Strings } from 'cafe-utility'
 import { readFile } from 'fs/promises'
 import manta from 'mantaray-js'
 
-const uploadQueue = Promises.makeAsyncQueue(8)
-
 const deferred = false
 const beeUrl = process.env.BEE || 'http://localhost:1633'
 const stamp = process.env.STAMP || 'f0b1935f917f5d9f29726e9f184b82309829b5bdfc9e1f177a6f84a9ea4cbd56'
@@ -16,34 +14,40 @@ const filename = Strings.normalizeFilename(path)
 const contentType = detectMime(filename)
 const buffer = await readFile(path)
 const bytes = new Uint8Array(buffer)
-const chunkedFile = bmt.makeChunkedFile(bytes)
+const address = await splitAndUploadChunks(bytes)
+await createManifest(filename, address)
 
-const levels = chunkedFile.bmt()
-for (const level of levels) {
-    for (const chunk of level) {
-        uploadQueue.enqueue(async () => {
-            const reference = await uploadChunkWithRetries(chunk)
-            console.log('✅', `${beeUrl}/chunks/${reference}`)
-        })
+async function splitAndUploadChunks(bytes) {
+    const queue = Promises.makeAsyncQueue(8)
+    const chunkedFile = bmt.makeChunkedFile(bytes)
+    const levels = chunkedFile.bmt()
+    for (const level of levels) {
+        for (const chunk of level) {
+            queue.enqueue(async () => {
+                const reference = await uploadChunkWithRetries(chunk)
+                console.log('✅', `${beeUrl}/chunks/${reference}`)
+            })
+        }
     }
+    await queue.drain()
+    return chunkedFile.address()
 }
 
-const node = new manta.MantarayNode()
-node.addFork(encodePath(`/${filename}`), chunkedFile.address(), {
-    'Content-Type': contentType,
-    Filename: filename
-})
-node.addFork(encodePath('/'), new Uint8Array(32), {
-    'website-index-document': `/${filename}`
-})
-
-uploadQueue.enqueue(async () => {
+async function createManifest(filename, address) {
+    const node = new manta.MantarayNode()
+    node.addFork(encodePath(`/${filename}`), address, {
+        'Content-Type': contentType,
+        Filename: filename
+    })
+    node.addFork(encodePath('/'), new Uint8Array(32), {
+        'website-index-document': `/${filename}`
+    })
     const manifest = await node.save(async data => {
         const result = await uploadDataWithRetries(data)
         return fromHexString(result.reference)
     })
     console.log('📦', `${beeUrl}/bzz/${toHexString(manifest)}/`)
-})
+}
 
 async function uploadDataWithRetries(data) {
     let lastError = null
