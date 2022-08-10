@@ -1,24 +1,30 @@
 import { Bee } from '@ethersphere/bee-js'
 import bmt from '@fairdatasociety/bmt-js'
+import { Promises, Strings } from 'cafe-utility'
 import { readFile } from 'fs/promises'
 import manta from 'mantaray-js'
 
-const deferred = true
-const beeUrl = 'http://localhost:1633'
-const stamp = 'f0b1935f917f5d9f29726e9f184b82309829b5bdfc9e1f177a6f84a9ea4cbd56'
+const uploadQueue = Promises.makeAsyncQueue(8)
+
+const deferred = false
+const beeUrl = process.env.BEE || 'http://localhost:1633'
+const stamp = process.env.STAMP || 'f0b1935f917f5d9f29726e9f184b82309829b5bdfc9e1f177a6f84a9ea4cbd56'
 const bee = new Bee(beeUrl)
-const filename = process.argv[2]
+const path = process.argv[2]
+const filename = Strings.normalizeFilename(path)
 
 const contentType = detectMime(filename)
-const buffer = await readFile(filename)
+const buffer = await readFile(path)
 const bytes = new Uint8Array(buffer)
 const chunkedFile = bmt.makeChunkedFile(bytes)
 
 const levels = chunkedFile.bmt()
 for (const level of levels) {
     for (const chunk of level) {
-        const reference = await uploadChunkWithRetries(chunk)
-        console.log('✅', `${beeUrl}/chunks/${reference}`)
+        uploadQueue.enqueue(async () => {
+            const reference = await uploadChunkWithRetries(chunk)
+            console.log('✅', `${beeUrl}/chunks/${reference}`)
+        })
     }
 }
 
@@ -30,12 +36,14 @@ node.addFork(encodePath(`/${filename}`), chunkedFile.address(), {
 node.addFork(encodePath('/'), new Uint8Array(32), {
     'website-index-document': `/${filename}`
 })
-const manifest = await node.save(async data => {
-    const result = await uploadDataWithRetries(data)
-    return fromHexString(result.reference)
-})
 
-console.log('📦', `${beeUrl}/bzz/${toHexString(manifest)}/`)
+uploadQueue.enqueue(async () => {
+    const manifest = await node.save(async data => {
+        const result = await uploadDataWithRetries(data)
+        return fromHexString(result.reference)
+    })
+    console.log('📦', `${beeUrl}/bzz/${toHexString(manifest)}/`)
+})
 
 async function uploadDataWithRetries(data) {
     let lastError = null
@@ -87,7 +95,7 @@ function toHexString(bytes) {
 }
 
 function detectMime(filename) {
-    const extension = filename.split('.').pop()
+    const extension = Strings.getExtension(filename)
     return (
         {
             aac: 'audio/aac',
