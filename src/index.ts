@@ -1,31 +1,47 @@
 import { Bee } from '@ethersphere/bee-js'
-import bmt from '@fairdatasociety/bmt-js'
+import { Chunk, ChunkAddress, makeChunkedFile } from '@fairdatasociety/bmt-js'
 import { Promises, Strings } from 'cafe-utility'
-import { readFile } from 'fs/promises'
-import manta from 'mantaray-js'
+import { MantarayNode, Reference } from 'mantaray-js'
+import { TextEncoder } from 'util'
 
-const deferred = false
-const beeUrl = process.env.BEE || 'http://localhost:1633'
-const stamp = process.env.STAMP || 'f0b1935f917f5d9f29726e9f184b82309829b5bdfc9e1f177a6f84a9ea4cbd56'
-const bee = new Bee(beeUrl)
-const path = process.argv[2]
-const filename = Strings.normalizeFilename(path)
+type Options = {
+    filename: string
+    beeUrl: string
+    stamp: string
+    deferred?: boolean
+    parallelism?: number
+    contentType?: string
+    retries?: number
+    onSuccessfulChunkUpload?: (chunk: Chunk, context: Context) => Promise<void>
+    onFailedChunkUpload?: (chunk: Chunk, context: Context) => Promise<void>
+}
 
-const contentType = detectMime(filename)
-const buffer = await readFile(path)
-const bytes = new Uint8Array(buffer)
-const address = await splitAndUploadChunks(bytes)
-await createManifest(filename, address)
+type Context = Required<Options> & { bee: Bee }
 
-async function splitAndUploadChunks(bytes) {
-    const queue = Promises.makeAsyncQueue(8)
-    const chunkedFile = bmt.makeChunkedFile(bytes)
+type Result = {
+    rootChunkAddress: ChunkAddress
+    bzzReference: Reference
+    context: Context
+}
+
+const noop = () => Promise.resolve()
+
+export async function uploadChunked(bytes: Uint8Array, options: Options): Promise<Result> {
+    const context = makeContext(options)
+    const rootChunkAddress = await splitAndUploadChunks(bytes, context)
+    const bzzReference = await createManifest(rootChunkAddress, context)
+    return { rootChunkAddress, bzzReference, context }
+}
+
+async function splitAndUploadChunks(bytes: Uint8Array, context: Context): Promise<ChunkAddress> {
+    const queue = Promises.makeAsyncQueue(context.parallelism)
+    const chunkedFile = makeChunkedFile(bytes)
     const levels = chunkedFile.bmt()
     for (const level of levels) {
         for (const chunk of level) {
             queue.enqueue(async () => {
-                const reference = await uploadChunkWithRetries(chunk)
-                console.log('✅', `${beeUrl}/chunks/${reference}`)
+                await uploadChunkWithRetries(chunk, context)
+                await context.onSuccessfulChunkUpload(chunk, context)
             })
         }
     }
@@ -33,72 +49,94 @@ async function splitAndUploadChunks(bytes) {
     return chunkedFile.address()
 }
 
-async function createManifest(filename, address) {
-    const node = new manta.MantarayNode()
-    node.addFork(encodePath(`/${filename}`), address, {
-        'Content-Type': contentType,
-        Filename: filename
+async function createManifest(address: ChunkAddress, context: Context): Promise<Reference> {
+    const node = new MantarayNode()
+    node.addFork(encodePath(`/${context.filename}`), address, {
+        'Content-Type': context.contentType,
+        Filename: context.filename
     })
-    node.addFork(encodePath('/'), new Uint8Array(32), {
-        'website-index-document': `/${filename}`
+    node.addFork(encodePath('/'), new Uint8Array(32) as Reference, {
+        'website-index-document': `/${context.filename}`
     })
-    const manifest = await node.save(async data => {
-        const result = await uploadDataWithRetries(data)
-        return fromHexString(result.reference)
+    const reference = await node.save(async data => {
+        const result = await uploadDataWithRetries(data, context)
+        return fromHexString(result.reference) as Reference
     })
-    console.log('📦', `${beeUrl}/bzz/${toHexString(manifest)}/`)
+    return reference
 }
 
-async function uploadDataWithRetries(data) {
+async function uploadDataWithRetries(data: Uint8Array, context: Context): Promise<{ reference: string }> {
     let lastError = null
-    for (let attempts = 0; attempts < 5; attempts++) {
+    for (let attempts = 0; attempts < context.retries; attempts++) {
         try {
-            return await bee.uploadData(stamp, data)
+            return await context.bee.uploadData(context.stamp, data)
         } catch (error) {
             lastError = error
-            console.error('❌')
         }
     }
     throw lastError
 }
 
-async function uploadChunkWithRetries(chunk) {
+async function uploadChunkWithRetries(chunk: Chunk, context: Context) {
     let lastError = null
-    for (let attempts = 0; attempts < 5; attempts++) {
+    for (let attempts = 0; attempts < context.retries; attempts++) {
         try {
-            return await uploadChunk(chunk)
+            return await uploadChunk(chunk, context)
         } catch (error) {
             lastError = error
-            console.error('❌', `${beeUrl}/chunks/${toHexString(chunk.address())}`)
+            await context.onFailedChunkUpload(chunk, context)
         }
     }
     throw lastError
 }
 
-async function uploadChunk(chunk) {
+async function uploadChunk(chunk: Chunk, context: Context) {
     const expectedReference = toHexString(chunk.address())
-    const actualReference = await bee.uploadChunk(stamp, Uint8Array.from([...chunk.span(), ...chunk.payload]), {
-        deferred
-    })
+    const actualReference = await context.bee.uploadChunk(
+        context.stamp,
+        Uint8Array.from([...chunk.span(), ...chunk.payload]),
+        {
+            deferred: context.deferred
+        }
+    )
     if (actualReference !== expectedReference) {
         throw Error(`Expected ${expectedReference} but got ${actualReference}`)
     }
     return actualReference
 }
 
-function encodePath(path) {
+function makeContext(options: Options): Context {
+    return {
+        filename: options.filename,
+        beeUrl: options.beeUrl,
+        stamp: options.stamp,
+        bee: new Bee(options.beeUrl),
+        deferred: options.deferred ?? true,
+        parallelism: options.parallelism ?? 8,
+        contentType: options.contentType ?? detectMime(options.filename),
+        retries: options.retries ?? 5,
+        onSuccessfulChunkUpload: options.onSuccessfulChunkUpload ?? noop,
+        onFailedChunkUpload: options.onFailedChunkUpload ?? noop
+    }
+}
+
+function encodePath(path: string) {
     return new TextEncoder().encode(path)
 }
 
-function fromHexString(hexString) {
-    return Uint8Array.from(hexString.match(/.{1,2}/g).map(byte => parseInt(byte, 16)))
+function fromHexString(hexString: string): Uint8Array {
+    const matches = hexString.match(/.{1,2}/g)
+    if (!matches) {
+        throw Error(`Invalid hex string: ${hexString}`)
+    }
+    return Uint8Array.from(matches.map(byte => parseInt(byte, 16)))
 }
 
-function toHexString(bytes) {
+function toHexString(bytes: Uint8Array): string {
     return bytes.reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '')
 }
 
-function detectMime(filename) {
+function detectMime(filename: string): string {
     const extension = Strings.getExtension(filename)
     return (
         {

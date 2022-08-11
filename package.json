@@ -1,19 +1,30 @@
 {
-    "name": "chunked-upload",
-    "type": "module",
+    "name": "swarm-chunked-upload",
     "version": "1.0.0",
     "description": "",
-    "main": "index.js",
+    "main": "dist/index.js",
+    "exports": {
+        ".": {
+            "require": "./dist/index.js",
+            "default": "./dist/module.mjs",
+            "types": "./dist/index.d.ts"
+        },
+        "./package.json": "./package.json"
+    },
     "scripts": {
-        "start": "node --experimental-modules --es-module-specifier-resolution=node index.js"
+        "build": "tsc"
     },
     "keywords": [],
     "author": "",
-    "license": "ISC",
+    "license": "MIT",
     "dependencies": {
         "@ethersphere/bee-js": "^5.0.0",
         "@fairdatasociety/bmt-js": "^2.0.1",
-        "cafe-utility": "^4.1.0",
+        "cafe-utility": "^4.2.0",
         "mantaray-js": "^1.0.3"
+    },
+    "devDependencies": {
+        "@types/node": "^18.7.1",
+        "typescript": "^4.7.4"
     }
 }
