@@ -1,8 +1,6 @@
 import { PostageBatch } from '@ethersphere/bee-js'
 import { Wallet, keccak256, solidityPacked } from 'ethers'
 
-const PREFIX_STRING = Buffer.from('\x19Ethereum Signed Message:\n32')
-
 export const TEST_BATCH_ID = process.env.DUMMY_STAMP
 export const TEST_PRIVATE_KEY = process.env.DUMMY_PRIVATE_KEY
 
@@ -10,7 +8,7 @@ export async function createSignature(
     address: Buffer,
     privateKey: Buffer,
     batchID: Buffer,
-    depth: number,
+    index: Buffer,
     timestamp: number
 ): Promise<Buffer> {
     console.log('Address', address.toString('hex'))
@@ -34,16 +32,13 @@ export async function createSignature(
     }
 
     const signer = new Wallet(privateKey.toString('hex'))
-    const index = swarmAddressToBucketIndex(depth, address)
-    const indexBuffer = Buffer.alloc(8)
-    indexBuffer.writeBigUInt64BE(BigInt(index))
     const timestampBuffer = Buffer.alloc(8)
     timestampBuffer.writeBigUInt64BE(BigInt(timestamp))
     const packed = solidityPacked(
         ['bytes32', 'bytes32', 'bytes8', 'bytes8'],
-        [address, batchID, indexBuffer, timestampBuffer]
+        [address, batchID, index, timestampBuffer]
     )
-    console.log('Index', indexBuffer.toString('hex'))
+    console.log('Index', index.toString('hex'))
     console.log('Timestamp', timestampBuffer.toString('hex'))
     console.log('Digest', { packed })
     const packedBuffer = Buffer.from(packed.slice(2), 'hex')
@@ -80,7 +75,7 @@ export async function marshalPostageStamp(
     const bucket = swarmAddressToBucketIndex(16, address)
     const index = bucketAndIndexToBuffer(bucket, 0)
     console.log({ index })
-    const signature = await createSignature(address, privateKey, batchID, postageBatch.depth, timestamp)
+    const signature = await createSignature(address, privateKey, batchID, index, timestamp)
     const buffer = Buffer.alloc(32 + 8 + 8 + 65)
     batchID.copy(buffer, 0)
     index.copy(buffer, 32)
