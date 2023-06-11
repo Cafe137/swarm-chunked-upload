@@ -10,6 +10,15 @@ export async function createSignature(
     batchID: Buffer,
     depth: number
 ): Promise<Buffer> {
+    if (!Buffer.isBuffer(address)) {
+        throw Error('Expected address to be a Buffer')
+    }
+    if (!Buffer.isBuffer(privateKey)) {
+        throw Error('Expected privateKey to be a Buffer')
+    }
+    if (!Buffer.isBuffer(batchID)) {
+        throw Error('Expected batchID to be a Buffer')
+    }
     if (address.length !== 32) {
         throw Error('Expected 32 byte address, got ' + address.length + ' bytes')
     }
@@ -42,6 +51,12 @@ export async function marshalPostageStamp(
     address: Buffer,
     privateKey: Buffer
 ): Promise<Buffer> {
+    if (!Buffer.isBuffer(address)) {
+        throw Error('Expected address to be a Buffer')
+    }
+    if (!Buffer.isBuffer(privateKey)) {
+        throw Error('Expected privateKey to be a Buffer')
+    }
     if (address.length !== 32) {
         throw Error('Expected 32 byte address, got ' + address.length + ' bytes')
     }
@@ -50,6 +65,7 @@ export async function marshalPostageStamp(
     }
     const batchID = Buffer.from(postageBatch.batchID, 'hex')
     const index = swarmAddressToBucketIndex(postageBatch.depth, address)
+    console.log({ index })
     const signature = await createSignature(address, privateKey, batchID, postageBatch.depth)
     const buffer = Buffer.alloc(32 + 8 + 8 + 65)
     batchID.copy(buffer, 0)
