@@ -1,5 +1,7 @@
 import { PostageBatch } from '@ethersphere/bee-js'
-import { Wallet } from 'ethers'
+import { AbiCoder, Wallet, keccak256 } from 'ethers'
+
+const PREFIX_STRING = Buffer.from('\x19Ethereum Signed Message:\n32')
 
 export const TEST_BATCH_ID = process.env.DUMMY_STAMP
 export const TEST_PRIVATE_KEY = process.env.DUMMY_PRIVATE_KEY
@@ -27,22 +29,14 @@ export async function createSignature(
     }
     const signer = new Wallet(privateKey.toString('hex'))
     const index = swarmAddressToBucketIndex(depth, address)
-    const toSign = Buffer.alloc(32 + 32 + 8 + 8)
-    address.copy(toSign, 0)
-    batchID.copy(toSign, 32)
-    toSign.writeBigUInt64LE(BigInt(index), 64)
-    toSign.writeBigUInt64LE(BigInt(Date.now()), 72)
-    const eip191SignatureString: string = await signer.signMessage(toSign)
-    const eip191Signature = Buffer.from(eip191SignatureString.slice(2), 'hex')
-    // const signature = Buffer.concat([
-    //     util.setLengthLeft(ecdsaSignature.r, 32),
-    //     util.setLengthLeft(ecdsaSignature.s, 32),
-    //     util.toBuffer(ecdsaSignature.v)
-    // ])
-    if (eip191Signature.length !== 65) {
-        throw Error('Expected 65 byte signature, got ' + eip191Signature.length + ' bytes')
+    const coder = new AbiCoder()
+    const packed = coder.encode(['bytes32', 'bytes32', 'uint64', 'uint64'], [address, batchID, index, Date.now()])
+    const signedHexString = await signer.signMessage(keccak256(packed))
+    const signed = Buffer.from(signedHexString.slice(2), 'hex')
+    if (signed.length !== 65) {
+        throw Error('Expected 65 byte signature, got ' + signed.length + ' bytes')
     }
-    return eip191Signature
+    return signed
 }
 
 export async function marshalPostageStamp(
@@ -64,7 +58,7 @@ export async function marshalPostageStamp(
         throw Error('Expected 32 byte privateKey, got ' + privateKey.length + ' bytes')
     }
     const batchID = Buffer.from(postageBatch.batchID, 'hex')
-    const bucket = swarmAddressToBucketIndex(postageBatch.depth, address)
+    const bucket = swarmAddressToBucketIndex(16, address)
     const index = bucketAndIndexToBuffer(bucket, 0)
     console.log({ index })
     const signature = await createSignature(address, privateKey, batchID, postageBatch.depth)
