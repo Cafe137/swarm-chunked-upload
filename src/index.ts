@@ -27,6 +27,7 @@ async function main() {
             )
             const marshalOutputPath = `data-${chunkIndex}-${chunkAddressHex}.sig.bin`
             writeFileSync(marshalOutputPath, marshal.toString('hex'), 'utf8')
+            return
         }
     }
 }

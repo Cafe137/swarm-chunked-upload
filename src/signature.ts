@@ -10,8 +10,10 @@ export async function createSignature(
     address: Buffer,
     privateKey: Buffer,
     batchID: Buffer,
-    depth: number
+    depth: number,
+    timestamp: number
 ): Promise<Buffer> {
+    console.log('Address', address.toString('hex'))
     if (!Buffer.isBuffer(address)) {
         throw Error('Expected address to be a Buffer')
     }
@@ -34,15 +36,20 @@ export async function createSignature(
     const signer = new Wallet(privateKey.toString('hex'))
     const index = swarmAddressToBucketIndex(depth, address)
     const indexBuffer = Buffer.alloc(8)
-    indexBuffer.writeBigUInt64LE(BigInt(index))
+    indexBuffer.writeBigUInt64BE(BigInt(index))
     const timestampBuffer = Buffer.alloc(8)
-    timestampBuffer.writeBigUInt64LE(BigInt(Date.now()))
+    timestampBuffer.writeBigUInt64BE(BigInt(timestamp))
     const packed = solidityPacked(
         ['bytes32', 'bytes32', 'bytes8', 'bytes8'],
         [address, batchID, indexBuffer, timestampBuffer]
     )
-    console.log({ packed })
-    const signedHexString = await signer.signMessage(keccak256(packed))
+    console.log('Index', indexBuffer.toString('hex'))
+    console.log('Timestamp', timestampBuffer.toString('hex'))
+    console.log('Digest', { packed })
+    const packedBuffer = Buffer.from(packed.slice(2), 'hex')
+    const keccaked = keccak256(packedBuffer)
+    const signable = Buffer.from(keccaked.startsWith('0x') ? keccaked.slice(2) : keccaked, 'hex')
+    const signedHexString = await signer.signMessage(signable)
     console.log({ signedHexString })
     const signed = Buffer.from(signedHexString.slice(2), 'hex')
     if (signed.length !== 65) {
@@ -73,7 +80,7 @@ export async function marshalPostageStamp(
     const bucket = swarmAddressToBucketIndex(16, address)
     const index = bucketAndIndexToBuffer(bucket, 0)
     console.log({ index })
-    const signature = await createSignature(address, privateKey, batchID, postageBatch.depth)
+    const signature = await createSignature(address, privateKey, batchID, postageBatch.depth, timestamp)
     const buffer = Buffer.alloc(32 + 8 + 8 + 65)
     batchID.copy(buffer, 0)
     index.copy(buffer, 32)
