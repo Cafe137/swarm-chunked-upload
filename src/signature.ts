@@ -38,7 +38,6 @@ export async function createSignature(
 
 export async function marshalPostageStamp(
     postageBatch: PostageBatch,
-    index: number,
     timestamp: number,
     address: Buffer,
     privateKey: Buffer
@@ -50,6 +49,7 @@ export async function marshalPostageStamp(
         throw Error('Expected 32 byte privateKey, got ' + privateKey.length + ' bytes')
     }
     const batchID = Buffer.from(postageBatch.batchID, 'hex')
+    const index = swarmAddressToBucketIndex(postageBatch.depth, address)
     const signature = await createSignature(address, privateKey, batchID, postageBatch.depth)
     const buffer = Buffer.alloc(32 + 8 + 8 + 65)
     batchID.copy(buffer, 0)
