@@ -64,13 +64,14 @@ export async function marshalPostageStamp(
         throw Error('Expected 32 byte privateKey, got ' + privateKey.length + ' bytes')
     }
     const batchID = Buffer.from(postageBatch.batchID, 'hex')
-    const index = swarmAddressToBucketIndex(postageBatch.depth, address)
+    const bucket = swarmAddressToBucketIndex(postageBatch.depth, address)
+    const index = bucketAndIndexToBuffer(bucket, 0)
     console.log({ index })
     const signature = await createSignature(address, privateKey, batchID, postageBatch.depth)
     const buffer = Buffer.alloc(32 + 8 + 8 + 65)
     batchID.copy(buffer, 0)
-    buffer.writeBigUInt64LE(BigInt(index), 32)
-    buffer.writeBigUInt64LE(BigInt(timestamp), 40)
+    index.copy(buffer, 32)
+    buffer.writeBigUInt64BE(BigInt(timestamp), 40)
     signature.copy(buffer, 48)
     return buffer
 }
@@ -84,4 +85,12 @@ export function swarmAddressToBucketIndex(depth: number, address: Buffer): numbe
     }
     const i = address.readUInt32BE(0)
     return i >>> (32 - depth)
+}
+
+function bucketAndIndexToBuffer(bucket: number, index: number): Buffer {
+    console.log({ bucket, index })
+    const buffer = Buffer.alloc(8)
+    buffer.writeUInt32BE(bucket)
+    buffer.writeUInt32BE(index, 4)
+    return buffer
 }
