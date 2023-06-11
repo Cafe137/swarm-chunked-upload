@@ -1,5 +1,5 @@
 import { PostageBatch } from '@ethersphere/bee-js'
-import { AbiCoder, Wallet, keccak256 } from 'ethers'
+import { Wallet, keccak256, solidityPacked } from 'ethers'
 
 const PREFIX_STRING = Buffer.from('\x19Ethereum Signed Message:\n32')
 
@@ -27,11 +27,23 @@ export async function createSignature(
     if (batchID.length !== 32) {
         throw Error('Expected 32 byte batchID, got ' + batchID.length + ' bytes')
     }
+    if (privateKey.length !== 32) {
+        throw Error('Expected 32 byte privateKey, got ' + privateKey.length + ' bytes')
+    }
+
     const signer = new Wallet(privateKey.toString('hex'))
     const index = swarmAddressToBucketIndex(depth, address)
-    const coder = new AbiCoder()
-    const packed = coder.encode(['bytes32', 'bytes32', 'uint64', 'uint64'], [address, batchID, index, Date.now()])
+    const indexBuffer = Buffer.alloc(8)
+    indexBuffer.writeBigUInt64LE(BigInt(index))
+    const timestampBuffer = Buffer.alloc(8)
+    timestampBuffer.writeBigUInt64LE(BigInt(Date.now()))
+    const packed = solidityPacked(
+        ['bytes32', 'bytes32', 'bytes8', 'bytes8'],
+        [address, batchID, indexBuffer, timestampBuffer]
+    )
+    console.log({ packed })
     const signedHexString = await signer.signMessage(keccak256(packed))
+    console.log({ signedHexString })
     const signed = Buffer.from(signedHexString.slice(2), 'hex')
     if (signed.length !== 65) {
         throw Error('Expected 65 byte signature, got ' + signed.length + ' bytes')
